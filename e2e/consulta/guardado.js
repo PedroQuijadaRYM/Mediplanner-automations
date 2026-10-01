@@ -29,6 +29,7 @@ async function guardarCambiosGlobal(page) {
     '/api/consultations/setFreeTreatmentsConsultation',
     '/api/procedures/setProceduresConsultation',
     '/api/consultations/addServices',
+    '/api/patients/registerAnswers',
   ];
   const respuestas = [];
   const listener = async (r) => {
@@ -41,9 +42,28 @@ async function guardarCambiosGlobal(page) {
   const guardarBtn = page.locator('button:has-text("Guardar cambios")').first();
   await expect(guardarBtn, 'Debe existir el botón global "Guardar cambios"').toBeVisible({ timeout: 10000 });
   await handleModals(page);
-  await guardarBtn.click();
-  await page.waitForTimeout(5000);
-  await handleModals(page);
+
+  // Hallazgo G (2026-10-01): un solo clic NO garantiza que se guarden las
+  // respuestas de los checklists (registerAnswers): en 3 de 4 corridas con
+  // Tapia el clic no las reenvió y quedó la copia parcial del autoguardado.
+  // El panel muestra un indicador "Guardado hace Xs · pendiente"; se pulsa
+  // hasta que deje de decir "pendiente" (máx. 4 intentos) y se loguea cuántos
+  // hicieron falta — nunca se asume que el primer clic guardó todo.
+  const indicador = page.getByText(/Guardado hace|Guardado/i).first();
+  const leerIndicador = async () => ((await indicador.count()) > 0 ? ((await indicador.innerText()).replace(/\s+/g, ' ').trim()) : '(sin indicador)');
+  console.log(`💾 Indicador antes de guardar: "${await leerIndicador()}"`);
+  let intentos = 0;
+  for (; intentos < 4; intentos++) {
+    await guardarBtn.click();
+    await page.waitForTimeout(5000);
+    await handleModals(page);
+    const estado = await leerIndicador();
+    console.log(`💾 Intento ${intentos + 1}: indicador = "${estado}"`);
+    if (!/pendiente/i.test(estado)) { intentos++; break; }
+  }
+  const estadoFinal = await leerIndicador();
+  console.log(`💾 "Guardar cambios" pulsado ${intentos} vez/veces; indicador final: "${estadoFinal}"`);
+  expect(/pendiente/i.test(estadoFinal), `Tras ${intentos} intento(s) de "Guardar cambios" el indicador sigue en "pendiente": "${estadoFinal}"`).toBe(false);
 
   page.off('response', listener);
   console.log(`💾 Llamadas de guardado disparadas por "Guardar cambios": ${respuestas.length}`);

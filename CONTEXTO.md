@@ -120,6 +120,24 @@ de `opcional()` por corrida, valor `null` en el inventario). Ahora lee por
 tipo de elemento y loguea los no-formulario — eran los 3 editores Jodit de
 Tratamiento, Laboratorios y Notas del Médico. 0 disparos en 2 corridas.
 
+**Primera corrida contra otro paciente (2026-10-01, "Agustin Tapia Nievas",
+adulto de 27 años):** citas y consulta funcionan igual que con Percentil; los
+datos de las 5 pestañas de la consulta se guardan y se ven bien en el perfil.
+Diferencias de paciente: sin campo/tarjeta de perímetro cefálico ni pestaña
+"Percentil" (adulto). Se encontró y corrigió un bug del test: "Observaciones
+del diagnóstico" nunca se llenaba (había que activar el interruptor "Agregar
+observaciones"; el test escribía en el combobox de CIE-10 y loguea "llenadas"
+en falso). Ahora se llena bien y se verifica vía `nota_diagnostico`. Detalle:
+`docs/historial/2026-10-01-hallazgo-e-observaciones-dx.md`. Medidas
+configurables por `MEDIDA_PESO`/`MEDIDA_TALLA`/`MEDIDA_PERIMETRO`. Lección
+(norma §5): se revisó `secciones.js` (2026-10-01): no hay más llenados con ese
+patrón, pero medicamento (7 campos), "Otros medicamentos", CIE-10, servicio,
+laboratorio e indicaciones solo se contaban — ahora el spec compara lo elegido
+contra lo guardado (`fill*Section` devuelven sus elecciones). Esa revisión
+destapó los hallazgos F y G de abajo. OJO: las corridas 2 y 3 de Tapia ya
+mostraban 10/15 en "Aparatos y sistemas" y no se leyó en su momento; solo se
+dio por bueno el 15/15 de la corrida 1.
+
 **Hueco abierto en `e2e/consulta/secciones.js` (2026-09-25, sin corregir):**
 CIE-10 y Laboratorios esperan 1.5s fijos a las opciones de búsqueda; si no
 llegaron, loguean "⚠️ Sin opciones…" y siguen (corrida 2: "A09" respondió
@@ -161,6 +179,8 @@ Detalle completo en `docs/hallazgos-abiertos.md`.
 | --- | --- | --- |
 | 1 | Carrera de datos: escribir en "General"/"Apariencia general" mientras el overlay "Recuperando datos del paciente..." sigue activo pierde lo tipeado | Causa raíz confirmada. Falta confirmación manual de Pedro antes de reportar a devs |
 | D | Botón "Quitar fecha" de Vacunación inclickeable en vacunas de 4+ dosis (11 de 32 botones) | **Reportado a devs (2026-09-25). En trabajo por el equipo de desarrollo** |
+| F | El perímetro cefálico no se captura en el flujo de consulta (ni modal de signos vitales ni consulta; el perfil de Percentil muestra "PC —") | Abierto, falta saber dónde se captura |
+| G | "Guardar cambios" pulsado al final de la consulta no guardaba los últimos ítems de "Aparatos y sistemas" (Tapia 6/8 corridas con pérdida, Percentil 0/7). El spec ahora guarda justo tras los checklists: 3/3 corridas 15/15 | **Abierto, alta severidad** para quien guarde una sola vez al final; falta decidir si se reporta a devs |
 | — | `getFilledForm` 404 tras Finalizar pese a `registerAnswers` 200 | Reproducido de nuevo 2026-09-17 noche, ya sin el confound de `doctorId` (ver abajo): 2 llamadas internas de la app en 404, resuelven solas ~3s después. La medición previa de "~100s" queda en duda |
 | — | `saveService`/`getServices`: el bug histórico no reprodujo el 2026-09-10 | En observación, no cerrado |
 

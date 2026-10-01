@@ -10,6 +10,8 @@ const {
   TEXTO_NOMBRE_REFERIDO,
   TEXTO_APARIENCIA,
   TEXTO_IMPRESION_DIAGNOSTICA,
+  TEXTO_OBSERVACIONES_DIAGNOSTICO,
+  TEXTO_INDICACIONES_LAB,
   TEXTO_PROCEDIMIENTO,
   TEXTO_NOTAS_MEDICO,
   PACIENTE_NOMBRE,
@@ -179,6 +181,8 @@ test('Start a scheduled consultation from Inicio', async ({ page }) => {
   });
 
   let serviciosSinOpciones = false;
+  // Lo que cada fill*Section eligió/llenó, para comparar con lo guardado tras Finalizar.
+  let elegidoDiagnostico = {}, elegidoTratamiento = {}, elegidoLaboratorios = {}, servicioElegido = null;
   let resultadoExploracion = null;
   let resultadoAparatos = null;
 
@@ -198,12 +202,17 @@ test('Start a scheduled consultation from Inicio', async ({ page }) => {
     // acentuada que la propia app podría corregir o volver a cambiar.
     resultadoExploracion = await fillChecklistSection(page, /^Exploración segmentar[ií]a\s*$/i, 'Exploración segmentaria');
     resultadoAparatos = await fillChecklistSection(page, /^Aparatos y sistemas$/i, 'Aparatos y sistemas');
-    await fillDiagnosticoSection(page);
-    await fillTratamientoSection(page);
-    await fillLaboratoriosSection(page);
+    // Hallazgo G: en cuanto terminan los checklists se pulsa "Guardar cambios" (sin llenar
+    // nada más antes) y se espera a que termine; recién después sigue el resto de la consulta.
+    console.log('💾 Checklists terminados — guardando de inmediato antes de seguir con la consulta...');
+    await guardarCambiosGlobal(page);
+    elegidoDiagnostico = await fillDiagnosticoSection(page);
+    elegidoTratamiento = await fillTratamientoSection(page);
+    elegidoLaboratorios = await fillLaboratoriosSection(page);
     await fillNotasMedicoSection(page);
-    const { sinOpcionesDisponibles } = await fillServiciosSection(page);
+    const { sinOpcionesDisponibles, servicio } = await fillServiciosSection(page);
     serviciosSinOpciones = sinOpcionesDisponibles;
+    servicioElegido = servicio;
   });
 
   await test.step('Guardar cambios (global)', async () => {
@@ -314,6 +323,11 @@ test('Start a scheduled consultation from Inicio', async ({ page }) => {
     chequear('nombre_referido', TEXTO_NOMBRE_REFERIDO, d.nombre_referido);
     chequear('apariencia', TEXTO_APARIENCIA, d.apariencia);
     chequear('impresion_diagnostico', TEXTO_IMPRESION_DIAGNOSTICA, d.impresion_diagnostico);
+    // 2026-10-01: "Observaciones del diagnóstico" se llenaba sin verificación
+    // alguna, y resultó que el test escribía en el combobox de CIE-10 (había
+    // que activar el interruptor "Agregar observaciones"). Ver
+    // docs/historial/2026-10-01-hallazgo-e-observaciones-dx.md.
+    chequear('nota_diagnostico (Observaciones del diagnóstico)', TEXTO_OBSERVACIONES_DIAGNOSTICO, d.nota_diagnostico);
 
     // indicaciones_general/indicaciones_procedimiento usan un texto elegido al
     // azar de una lista (no un literal fijo) — se verifica que no quedaron
@@ -327,12 +341,66 @@ test('Start a scheduled consultation from Inicio', async ({ page }) => {
     console.log(`  ${Array.isArray(d.diagnosticos) && d.diagnosticos.length > 0 ? '✅' : '❌'} diagnosticos: ${d.diagnosticos?.length ?? 0} elemento(s)`);
     if (!Array.isArray(d.servicios) || d.servicios.length === 0) inconsistencias.push('servicios: quedó vacío tras finalizar');
     console.log(`  ${Array.isArray(d.servicios) && d.servicios.length > 0 ? '✅' : '❌'} servicios: ${d.servicios?.length ?? 0} elemento(s)`);
+
+    // 2026-10-01: comparar lo ELEGIDO contra lo guardado (antes solo se contaba).
+    // Los nombres de la UI traen extras (código CIE, precio, principio activo,
+    // laboratorio), por eso se compara por "el texto de la UI contiene el
+    // nombre guardado", tolerante a acentos/espacios/mayúsculas.
+    const norm = (t) => sinAcentos(t).replace(/\s+/g, ' ');
+    const contiene = (textoUI, nombreApi) => !!nombreApi && norm(textoUI).includes(norm(nombreApi));
+    const verificar = (etiqueta, ok, detalle) => {
+      if (!ok) inconsistencias.push(`${etiqueta}: ${detalle}`);
+      console.log(`  ${ok ? '✅' : '❌'} ${etiqueta}${ok ? '' : ' — ' + detalle}`);
+    };
+    if (elegidoDiagnostico.cie10) {
+      const guardados = (d.diagnosticos || []).map(x => x.nombre);
+      verificar('diagnóstico CIE-10 (código elegido)', guardados.some(n => contiene(elegidoDiagnostico.cie10, n)), `se eligió "${elegidoDiagnostico.cie10}", guardado: ${JSON.stringify(guardados)}`);
+    } else {
+      verificar('diagnóstico CIE-10 (código elegido)', false, 'el llenado no registró ninguna opción elegida');
+    }
+    if (servicioElegido) {
+      const guardados = (d.servicios || []).map(x => x.nombre);
+      verificar('servicio (el elegido)', guardados.some(n => contiene(servicioElegido, n)), `se eligió "${servicioElegido}", guardado: ${JSON.stringify(guardados)}`);
+    }
+    // Indicaciones: texto exacto (el editor Jodit lo envuelve en <p>).
+    const sinTags = (h) => (h || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+    if (elegidoTratamiento.indicacionesGenerales) {
+      verificar('indicaciones_general (texto exacto)', sinTags(d.indicaciones_general) === elegidoTratamiento.indicacionesGenerales, `esperado "${elegidoTratamiento.indicacionesGenerales}" — real "${sinTags(d.indicaciones_general)}"`);
+    }
+    verificar('indicaciones_procedimiento (texto exacto)', sinTags(d.indicaciones_procedimiento) === TEXTO_INDICACIONES_LAB, `esperado "${TEXTO_INDICACIONES_LAB}" — real "${sinTags(d.indicaciones_procedimiento)}"`);
     if (d.estatus_id !== 4 && !/terminada/i.test(d.estatus || '')) inconsistencias.push(`estatus: esperaba "Terminada" tras Finalizar, quedó "${d.estatus}"`);
 
     const treatments = await fetchApi('consultations/getTreatments', { paciente_id: pacienteId, consulta_id: consultaId });
     const numMedicamentos = (treatments?.data || []).length;
     if (numMedicamentos === 0) inconsistencias.push('getTreatments: 0 medicamentos guardados');
     console.log(`  ${numMedicamentos > 0 ? '✅' : '❌'} medicamentos guardados: ${numMedicamentos}`);
+
+    // Medicamento del catálogo: nombre + los 7 campos del formulario, y "Otros
+    // medicamentos" (medicamento_id 0). Antes solo se contaba (hueco de cobertura).
+    const listaTrat = treatments?.data || [];
+    const delCatalogo = listaTrat.find(t => t.medicamento_id && t.medicamento_id !== 0);
+    const libre = listaTrat.find(t => !t.medicamento_id);
+    const mf = elegidoTratamiento.medForm;
+    if (elegidoTratamiento.medicamento && mf) {
+      verificar('medicamento (el elegido)', !!delCatalogo && contiene(elegidoTratamiento.medicamento, delCatalogo.medicamento_nombre), `se eligió "${elegidoTratamiento.medicamento}", guardado: ${JSON.stringify(delCatalogo?.medicamento_nombre)}`);
+      if (delCatalogo) {
+        const numEq = (campo, esperado, real) => verificar(`medicamento · ${campo}`, mf[campo] !== null && Number(esperado) === Number(real), `esperado "${esperado}" — guardado "${real}"`);
+        numEq('dosis', mf.dosis, delCatalogo.dosis_cantidad);
+        numEq('frecuencia', mf.frecuencia, delCatalogo.frecuencia_cantidad);
+        numEq('duracion', mf.duracion, delCatalogo.tiempo_cantidad);
+        verificar('medicamento · indicaciones', mf.indicaciones === delCatalogo.indicaciones, `esperado "${mf.indicaciones}" — guardado "${delCatalogo.indicaciones}"`);
+        verificar('medicamento · vía de administración', contiene(mf.via, delCatalogo.administracion_nombre), `UI "${mf.via}" — guardado "${delCatalogo.administracion_nombre}"`);
+        verificar('medicamento · unidad de dosis', contiene(mf.unidadDosis, delCatalogo.unidad_dosis_nombre), `UI "${mf.unidadDosis}" — guardado "${delCatalogo.unidad_dosis_nombre}"`);
+        verificar('medicamento · unidad de tiempo', contiene(mf.unidadTiempo, delCatalogo.unidad_tiempo_nombre), `UI "${mf.unidadTiempo}" — guardado "${delCatalogo.unidad_tiempo_nombre}"`);
+      }
+    } else {
+      verificar('medicamento (el elegido)', false, 'el llenado no registró medicamento elegido ni valores del formulario');
+    }
+    if (elegidoTratamiento.otros?.completo) {
+      verificar('"Otros medicamentos" (nombre e indicaciones)', !!libre && libre.medicamento_nombre === elegidoTratamiento.otros.nombre && libre.indicaciones === elegidoTratamiento.otros.indicaciones, `esperado ${JSON.stringify(elegidoTratamiento.otros)} — guardado ${JSON.stringify(libre && { nombre: libre.medicamento_nombre, indicaciones: libre.indicaciones })}`);
+    } else {
+      verificar('"Otros medicamentos"', false, 'el llenado quedó incompleto o no se registró');
+    }
 
     // Etapa 2 (cierra 2 de los 6 huecos de cobertura, 2026-09-17): Laboratorios
     // (selección + campo "procedimiento") y Notas del Médico no tenían NINGUNA
@@ -346,6 +414,11 @@ test('Start a scheduled consultation from Inicio', async ({ page }) => {
     const listaProcedimientos = procedimientos?.data || [];
     if (listaProcedimientos.length === 0) inconsistencias.push('getConsultationProcedures: 0 procedimientos/laboratorios guardados (Laboratorios y Procedimientos)');
     console.log(`  ${listaProcedimientos.length > 0 ? '✅' : '❌'} laboratorios/procedimientos guardados: ${listaProcedimientos.length}`);
+    if (elegidoLaboratorios.laboratorio) {
+      verificar('laboratorio (el elegido)', listaProcedimientos.some(p => contiene(elegidoLaboratorios.laboratorio, p.nombre)), `se eligió "${elegidoLaboratorios.laboratorio}", guardado: ${JSON.stringify(listaProcedimientos.map(p => p.nombre))}`);
+    } else {
+      verificar('laboratorio (el elegido)', false, 'el llenado no registró laboratorio elegido');
+    }
     if (listaProcedimientos.length > 0 && !listaProcedimientos.some(p => (p.indicaciones || '').includes(TEXTO_PROCEDIMIENTO))) {
       inconsistencias.push(`getConsultationProcedures: ningún procedimiento tiene el texto esperado ("${TEXTO_PROCEDIMIENTO}")`);
     }

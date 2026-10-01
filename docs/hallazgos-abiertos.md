@@ -45,6 +45,84 @@ Finalizar, y no es el CIE-10 de Diagnóstico. Detalle en
 
 ---
 
+## Hallazgo F — El perímetro cefálico no se captura en el flujo de consulta
+
+**Severidad:** media (por confirmar con desarrollo) · **Estado:** abierto (2026-10-01)
+
+El test llama a `fillPerimetroCefalico` con el valor del set (48/49/50 para
+Percentil) y siempre loguea que no encontró el campo. Antes decía "puede no
+aplicar"; ahora lo marca como `[Hallazgo F]`.
+
+**Evidencia (en vivo, 2026-10-01):**
+- El modal "Capturar signos vitales" de **Percentil (3 años)** tiene solo: presión,
+  FC, oxigenación, FR, temperatura, talla, peso e IMC. Sin perímetro.
+- Los signos vitales de una consulta terminada de Percentil tampoco lo muestran.
+- El perfil de Percentil muestra la tarjeta **"PC —"** (existe y está vacía).
+- La pestaña "Percentil" tiene 4 gráficos ("Vista general/Detalle") sin campo de captura.
+- En los 3 logs de Percentil revisados, el aviso salió en cada corrida.
+
+**Consecuencia:** `PERCENTIL_SETS.perimetro` y `MEDIDA_PERIMETRO` no llegan a
+ningún campo. **Sin confirmar:** si el PC se captura en otra pantalla que no
+hemos mirado (ficha, otra pestaña) o si no hay forma de capturarlo.
+
+**Evidencia:** `scripts-diagnostico/_investigar_perimetro_cefalico_dev.js` y `_dev2.js`.
+
+---
+
+## Hallazgo G — "Guardar cambios" pulsado tarde no guarda las respuestas de "Aparatos y sistemas"
+
+**Severidad:** alta (pérdida silenciosa de datos clínicos) · **Estado:** abierto; la suite lo esquiva guardando justo al terminar los checklists (2026-10-01)
+
+**Actualización (decisión de Pedro):** el spec ahora pulsa "Guardar cambios" **en
+cuanto terminan Exploración y Aparatos y sistemas**, sin llenar nada más antes, y
+recién después sigue con el resto de la consulta (Diagnóstico, Tratamiento…).
+Resultado con Tapia, velocidad normal: **15/15 en las 3 corridas** (9, 10 y 11),
+sin inconsistencias, y ese primer guardado dispara los 2 `registerAnswers`
+(200). Antes, con el único "Guardar cambios" al final de la consulta, 6 de 8
+corridas de Tapia perdían ítems. **Sin confirmar:** por qué el guardado final no
+reenvía las respuestas pero el inmediato sí; el riesgo para un médico que llena
+todo y guarda una sola vez al final queda abierto.
+
+**Qué pasa:** pulsar "Guardar cambios" antes de Finalizar **no envía** las
+respuestas de los checklists (`patients/registerAnswers`), aunque el panel
+cambie de "Guardado hace Xs · **pendiente**" a sin indicador (es decir, la
+app da por guardado algo que no se envió). Esas respuestas solo se guardan
+con un **autoguardado periódico de ~30 s**. Si se finaliza antes del
+siguiente ciclo, se pierden los últimos ítems (siempre #12 Nervioso, #13
+Reproductor, #14 Respiratorio de "Aparatos y sistemas"). Sin botón
+"Guardar Respuestas" (ya no existe), no hay forma manual de forzarlo.
+
+**Evidencia (verificada con `getFilledForm`, mismo spec, velocidad normal):**
+
+| Paciente | Corridas | Aparatos y sistemas |
+| --- | --- | --- |
+| Tapia (adulto, 70+ consultas) | 8 | 15, **10, 10, 13**, 15, **10, 9, 12** (2/8 sin pérdida) |
+| Percentil (3 años) | 7 | 15/15 en todas |
+| Cristiano Ronaldo Siete (adulto, sin historial), ritmo humano | 1 | 15/15 al final, pero a los ~12 s de llenar los últimos ítems aún no estaban guardados |
+| Carla Perez Rojas (adulta, 49 consultas), ritmo humano | 1 | ídem |
+
+Las corridas 5-8 de Tapia ya incluyen pulsar "Guardar cambios" hasta que el
+indicador deje de decir "pendiente" (`e2e/consulta/guardado.js`): antes de
+pulsar decía "pendiente" en las 4; tras el clic desapareció en las 4; y aun
+así 3 de 4 perdieron datos. Con `registerAnswers` = 2 en cada una (solo el
+autoguardado).
+
+**Con ritmo humano** (checklist ítem por ítem, ~5 min) el autoguardado sale
+cada ~30 s con los 31+17 campos completos y el estado final fue 15/15 (2
+pacientes): la pérdida requiere finalizar dentro de la ventana de ~30 s tras
+llenar los últimos ítems. Pedro decidió no seguir probando a ritmo humano
+(ver memoria `feedback-no-ritmo-humano-en-verificaciones-de-datos`).
+
+**Sin confirmar:** si un médico real finaliza dentro de esa ventana; por qué
+Tapia cae en ella con más frecuencia que Percentil (la suite rápida llega a
+Finalizar ~20-25 s después del último ítem en ambos).
+
+**Evidencia:** `logs/tapia-consulta-2..8.log`, `logs/percentil-comparacion-1/-2.log`,
+`logs/g-humano-cristiano.log`, `logs/g-humano-carla.log`, `logs/registeranswers-calls.json`,
+`scripts-diagnostico/_investigar_registeranswers_*.js`.
+
+---
+
 ## Hallazgo D — Botón "Quitar fecha" inclickeable en Vacunación
 
 **Severidad:** media/alta · **Estado:** reportado a devs el 2026-09-25, en trabajo

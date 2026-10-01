@@ -40,7 +40,15 @@ const PERCENTIL_SETS = {
   3: { peso: '15', talla: '98', perimetro: '50' },
 };
 const PERCENTIL_RUN = parseInt(process.env.PERCENTIL_RUN || '1', 10);
-const MEDIDAS = PERCENTIL_SETS[PERCENTIL_RUN] || PERCENTIL_SETS[1];
+// Los sets de arriba son pediátricos (paciente habitual "Percentil"). Para un
+// paciente adulto se pueden pisar por variable de entorno (MEDIDA_PESO,
+// MEDIDA_TALLA, MEDIDA_PERIMETRO); sin ellas, el default no cambia.
+const _SET_BASE = PERCENTIL_SETS[PERCENTIL_RUN] || PERCENTIL_SETS[1];
+const MEDIDAS = {
+  peso: process.env.MEDIDA_PESO || _SET_BASE.peso,
+  talla: process.env.MEDIDA_TALLA || _SET_BASE.talla,
+  perimetro: process.env.MEDIDA_PERIMETRO || _SET_BASE.perimetro,
+};
 
 module.exports = {
   DATOS_CLINICOS,

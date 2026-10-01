@@ -34,7 +34,11 @@ async function fillPerimetroCefalico(page, valor) {
     await perimetroInput.fill(valor);
     console.log(`📏 Perímetro cefálico: ${valor}`);
   } else {
-    console.log('ℹ️ No se encontró campo de perímetro cefálico en signos vitales (puede no aplicar).');
+    // 2026-10-01 (Hallazgo F): antes decía "puede no aplicar". Confirmado en vivo
+    // que el modal de signos vitales NO tiene campo de perímetro cefálico ni para
+    // Percentil (3 años) ni para Tapia (27) — y el perfil de Percentil muestra
+    // "PC —". Este valor NO se captura ni se guarda en este flujo.
+    console.log('⚠️ [Hallazgo F] El modal de signos vitales no tiene campo de perímetro cefálico — el valor NO se captura (ver docs/hallazgos-abiertos.md).');
   }
 }
 
@@ -226,6 +230,7 @@ async function fillChecklistSection(page, headingRegex, nombreLog) {
 
 async function fillDiagnosticoSection(page) {
   console.log('🩺 Llenando sección de Diagnóstico...');
+  const res = { cie10: null };
   try {
     const scope = await sectionContainer(page, /^Diagnóstico$/i);
     await page.waitForTimeout(500);
@@ -246,6 +251,7 @@ async function fillDiagnosticoSection(page) {
       if (optionCount > 0) {
         const optionText = (await opcional(options.first().textContent(), 'diagnostico:cie10-opcion-textcontent') || '').trim();
         await options.first().click();
+        res.cie10 = optionText;
         console.log(`✅ Diagnóstico CIE-10 seleccionado: "${optionText.substring(0, 40)}..."`);
       } else {
         console.log(`⚠️ Sin opciones de CIE-10 para "${codigoCIE10}"`);
@@ -263,38 +269,34 @@ async function fillDiagnosticoSection(page) {
       }
     }
 
-    // Observaciones: textarea visible dentro del scope que no sea Impresión
-    // diagnóstica ni el combobox react-select.
-    await page.waitForTimeout(1000);
-    const tas = scope.locator('textarea:visible:not([readonly]):not([disabled])');
-    const n = await tas.count();
-    // Precondición, no opcional (Etapa 2): estas 3 lecturas deciden si ESTE
-    // textarea es el de "Impresión diagnóstica" (a excluir) o el de
-    // Observaciones (a llenar). Si la lectura del placeholder falla y se
-    // trata como vacía en vez de reventar, el código puede confundir el
-    // textarea de Impresión diagnóstica con el de Observaciones y pisarlo —
-    // la misma familia de contaminación cruzada que motivó el diseño de
-    // sectionContainer() más arriba. Además, "Observaciones del diagnóstico"
-    // no tiene ninguna verificación posterior, así que un fallo acá no
-    // quedaría cubierto por ninguna red de seguridad aguas abajo.
-    for (let i = 0; i < n; i++) {
-      const ta = tas.nth(i);
-      const ph = (await ta.getAttribute('placeholder')) || '';
-      const val = (await ta.inputValue()) ?? '';
-      if (ph === 'Impresión diagnóstica' || val.trim()) continue;
-      await ta.fill(TEXTO_OBSERVACIONES_DIAGNOSTICO);
-      console.log('✅ Observaciones del diagnóstico llenadas');
-      break;
-    }
+    // Observaciones: el campo NO existe hasta activar el interruptor "Agregar
+    // observaciones" (checkbox sr-only dentro de un <label>); al activarlo
+    // aparece un textarea con placeholder "Notas adicionales" (Hallazgo E,
+    // 2026-10-01). Antes este código tomaba "el primer textarea vacío que no sea
+    // Impresión diagnóstica" — que era el input del combobox de CIE-10 — y
+    // escribía las observaciones ahí, con el log "✅ llenadas" en falso.
+    // Precondición, no opcional: si el interruptor o el textarea no aparecen,
+    // debe reventar (el try/catch exterior lo loguea como "⚠️ Error en Diagnóstico",
+    // y la verificación de nota_diagnostico tras Finalizar lo deja en evidencia).
+    const toggleObs = scope.locator('label:has-text("Agregar observaciones")').first();
+    await toggleObs.waitFor({ state: 'visible', timeout: 10000 });
+    await toggleObs.click();
+    const obsTextarea = scope.locator('textarea[placeholder="Notas adicionales"]').first();
+    await obsTextarea.waitFor({ state: 'visible', timeout: 10000 });
+    await obsTextarea.fill(TEXTO_OBSERVACIONES_DIAGNOSTICO);
+    console.log('✅ Observaciones del diagnóstico llenadas (interruptor + "Notas adicionales")');
 
     console.log('✅ Sección de Diagnóstico completada');
   } catch (error) {
     console.log(`⚠️ Error en Diagnóstico: ${error.message}`);
   }
+  return res;
 }
 
 async function fillTratamientoSection(page) {
   console.log('💊 Llenando sección de Tratamiento...');
+  // Lo que se eligió/llenó, para compararlo tras Finalizar (2026-10-01).
+  const res = { indicacionesGenerales: null, medicamento: null, medForm: null, otros: null };
   try {
     const scope = await sectionContainer(page, /^Tratamiento$/i);
     await page.waitForTimeout(500);
@@ -303,7 +305,8 @@ async function fillTratamientoSection(page) {
     if (await opcional(indicacionesEditor.isVisible(), 'tratamiento:indicaciones-editor-visible')) {
       await indicacionesEditor.click();
       await page.keyboard.press('Control+A');
-      await page.keyboard.type(pick(DATOS_CLINICOS.indicacionesGenerales));
+      res.indicacionesGenerales = pick(DATOS_CLINICOS.indicacionesGenerales);
+      await page.keyboard.type(res.indicacionesGenerales);
       console.log('✅ Indicaciones generales de tratamiento llenadas');
     }
 
@@ -331,6 +334,7 @@ async function fillTratamientoSection(page) {
         const textoReal = (await opcional(target.textContent(), 'tratamiento:medicamento-elegido-textcontent') || '').trim();
         await target.click();
         if (!elegida) console.log(`⚠️ Ninguna opción contenía "${medicamento}" — se tomó la primera disponible`);
+        res.medicamento = textoReal;
         console.log(`✅ Medicamento seleccionado: "${textoReal.substring(0, 60)}" (buscado: "${medicamento}")`);
       }
       await opcional(page.waitForLoadState('load'), 'tratamiento:load-tras-elegir-medicamento');
@@ -362,6 +366,19 @@ async function fillTratamientoSection(page) {
         }
       }
       console.log(`✅ Formulario del medicamento llenado (${camposMedLlenados}/${camposMedicamento.length} campos)`);
+      // Lo que quedó realmente en los campos (valores de los inputs y texto de la
+      // opción elegida en cada select), para compararlo con getTreatments.
+      const valorInput = async (sel) => (await page.locator(sel).count()) > 0 ? page.locator(sel).first().inputValue() : null;
+      const textoSelect = async (sel) => (await page.locator(sel).count()) > 0 ? page.locator(sel).first().evaluate(e => (e.options[e.selectedIndex] || {}).text || '') : null;
+      res.medForm = {
+        dosis: await valorInput('input[name="dosis_cantidad"]'),
+        frecuencia: await valorInput('input[name="frecuencia_cantidad"]'),
+        duracion: await valorInput('input[name="tiempo_cantidad"]'),
+        indicaciones: await valorInput('input[name="indicaciones-0"]'),
+        via: await textoSelect('select[name="iViaAdministracionId-0"]'),
+        unidadDosis: await textoSelect('select[name="unidad_dosis_id-0"]'),
+        unidadTiempo: await textoSelect('select[name="unidad_tiempo_id-0"]'),
+      };
     } else {
       console.log('⚠️ No se encontró el buscador de medicamentos en Tratamiento');
     }
@@ -397,6 +414,7 @@ async function fillTratamientoSection(page) {
         console.log('⚠️ No se encontró el input de "Indicaciones:" en Otros medicamentos');
         otrosMedicamentosCompleto = false;
       }
+      res.otros = { nombre: tratamientoDiferente, indicaciones: 'Tomar según indicación médica, con alimentos.', completo: otrosMedicamentosCompleto };
       console.log(otrosMedicamentosCompleto
         ? `✅ "Otros medicamentos" llenado: "${tratamientoDiferente}"`
         : `⚠️ "Otros medicamentos" quedó incompleto (buscado: "${tratamientoDiferente}")`);
@@ -408,10 +426,12 @@ async function fillTratamientoSection(page) {
   } catch (error) {
     console.log(`⚠️ Error en Tratamiento: ${error.message}`);
   }
+  return res;
 }
 
 async function fillLaboratoriosSection(page) {
   console.log('🔬 Llenando Laboratorios y Procedimientos...');
+  const res = { laboratorio: null };
   try {
     const scope = await sectionContainer(page, /^Laboratorios y Procedimientos$/i);
     await page.waitForTimeout(500);
@@ -447,6 +467,7 @@ async function fillLaboratoriosSection(page) {
         const text = (await opcional(target.textContent(), 'laboratorios:opcion-elegida-textcontent') || '').trim();
         await target.click();
         if (!elegida) console.log(`⚠️ Ninguna opción de laboratorio contenía "${laboratorio}" — se tomó la primera disponible`);
+        res.laboratorio = text;
         console.log(`✅ Laboratorio seleccionado: "${text.substring(0, 60)}" (buscado: "${laboratorio}")`);
       } else {
         console.log('⚠️ Sin opciones de laboratorio');
@@ -471,6 +492,7 @@ async function fillLaboratoriosSection(page) {
   } catch (error) {
     console.log(`⚠️ Error en Laboratorios: ${error.message}`);
   }
+  return res;
 }
 
 async function fillNotasMedicoSection(page) {
@@ -496,6 +518,7 @@ async function fillNotasMedicoSection(page) {
 async function fillServiciosSection(page) {
   console.log('🏥 Llenando sección de Servicios...');
   let sinOpcionesDisponibles = false;
+  let servicio = null;
   try {
     const scope = await sectionContainer(page, /^Servicios$/i);
     await page.waitForTimeout(500);
@@ -528,6 +551,7 @@ async function fillServiciosSection(page) {
           const optionText = (await opcional(option.textContent(), 'servicios:opcion-textcontent') || '').trim();
           if (optionText.toLowerCase().includes('certificado')) {
             await option.click();
+            servicio = optionText;
             console.log(`✅ Servicio seleccionado: "${optionText.substring(0, 60)}"`);
             elegido = true;
             break;
@@ -537,6 +561,7 @@ async function fillServiciosSection(page) {
           const first = options.first();
           const text = (await opcional(first.textContent(), 'servicios:opcion-primera-textcontent') || '').trim();
           await first.click();
+          servicio = text;
           console.log(`✅ Servicio seleccionado (primera opción): "${text.substring(0, 60)}"`);
         }
       }
@@ -548,7 +573,7 @@ async function fillServiciosSection(page) {
   } catch (error) {
     console.log(`⚠️ Error en Servicios: ${error.message}`);
   }
-  return { sinOpcionesDisponibles };
+  return { sinOpcionesDisponibles, servicio };
 }
 
 module.exports = {
