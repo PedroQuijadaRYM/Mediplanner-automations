@@ -3,7 +3,7 @@
 # a pedido de Pedro (2026-07-31), documentando bugs en CONTEXTO.md aparte.
 # Se ejecuta como proceso desacoplado (nohup) para no depender del timeout
 # de una sola llamada de herramienta — puede tardar varias horas en total.
-cd "/c/Users/pandr/OneDrive/00_Pedro_Quijada/03_RYM-Solutions/Repositorios/MediplannerWebNuevo" || exit 1
+cd "/c/Users/pandr/OneDrive/00_Pedro_Quijada/03_RYM-Solutions/Repositorios/Mediplanner-automations" || exit 1
 
 PROJECTS=(
   dashboard-explorar

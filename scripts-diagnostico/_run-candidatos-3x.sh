@@ -2,7 +2,7 @@
 # Re-corre SOLO los proyectos con hallazgos/candidatos de la corrida completa
 # anterior (2026-07-31), 3 veces seguidas, para confirmar o descartar rápido
 # sin perder tiempo en los que ya salieron limpios.
-cd "/c/Users/pandr/OneDrive/00_Pedro_Quijada/03_RYM-Solutions/Repositorios/MediplannerWebNuevo" || exit 1
+cd "/c/Users/pandr/OneDrive/00_Pedro_Quijada/03_RYM-Solutions/Repositorios/Mediplanner-automations" || exit 1
 
 PROJECTS=(
   dashboard
